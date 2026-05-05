@@ -1,167 +1,124 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Inspection Dashboard</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
-  <style>
-    body {
-      font-family: 'Segoe UI', sans-serif;
-      margin: 0;
-      background: #f4f4f4;
-    }
-
-    .header {
-      background: linear-gradient(135deg,#5a0000,#800000);
-      color: white;
-      padding: 20px;
-      text-align: center;
-      font-size: 28px;
-      font-weight: 600;
-      letter-spacing: 1px;
-    }
-
-    .container {
-      display: flex;
-      gap: 20px;
-      justify-content: center;
-      padding: 30px;
-      flex-wrap: wrap;
-    }
-
-    .card {
-      background: white;
-      padding: 20px;
-      border-radius: 12px;
-      width: 220px;
-      text-align: center;
-      box-shadow: 0 6px 20px rgba(0,0,0,0.15);
-      border-top: 4px solid #800000;
-    }
-
-    .card h3 {
-      color: #444;
-      margin-bottom: 10px;
-    }
-
-    .card p {
-      font-size: 28px;
-      color: #800000;
-      font-weight: bold;
-    }
-
-    .chart-container {
-      width: 80%;
-      margin: auto;
-      background: white;
-      padding: 25px;
-      border-radius: 12px;
-      box-shadow: 0 6px 20px rgba(0,0,0,0.15);
-    }
-  </style>
-</head>
-
-<body>
-
-<div class="header">Inspection Dashboard</div>
-
-<div class="container">
-  <div class="card">
-    <h3>Total Inspections</h3>
-    <p id="total">--</p>
-  </div>
-
-  <div class="card">
-    <h3>Pending</h3>
-    <p id="pending">--</p>
-  </div>
-
-  <div class="card">
-    <h3>Completed</h3>
-    <p id="completed">--</p>
-  </div>
-</div>
-
-<div class="chart-container">
-  <canvas id="chart"></canvas>
-</div>
-
 <script>
 
 const SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTeZnoo7bQLjzBf3tjqYLjtHMAy-n8Y35y0dqpPhqDacX3Vau8VSxinbvJ6ZirAZKeGX2fRBgnDvaCn/pub?gid=2111416219&single=true&output=csv";
 
-async function loadData() {
+Papa.parse(SHEET_URL, {
+  download: true,
+  header: true,
+  complete: function(results) {
 
-  const res = await fetch(SHEET_URL);
-  const text = await res.text();
+    const data = results.data;
 
-  const rows = text.trim().split("\n").map(r => r.split(","));
-  const headers = rows[0].map(h => h.trim().toLowerCase());
+    let total = 0;
+    let pass = 0;
+    let fail = 0;
+    let totalDefects = 0;
 
-  const data = rows.slice(1).map(r => {
-    let obj = {};
-    headers.forEach((h,i)=> obj[h] = r[i]);
-    return obj;
-  });
+    let vendorMap = {};
+    let inspectionMap = {};
+    let orders = new Set();
 
-  let total = data.length;
-  let pending = 0;
-  let completed = 0;
+    data.forEach(row => {
 
-  data.forEach(row => {
+      if (!row || Object.keys(row).length === 0) return;
+      total++;
 
-    // Find status column automatically
-    let statusValue = "";
+      let status = "";
+      let vendor = "";
+      let defects = 0;
+      let inspectionType = "";
+      let orderID = "";
 
-    for (let key in row) {
-      if (key.includes("status")) {
-        statusValue = row[key];
-        break;
+      for (let key in row) {
+        let k = key.toLowerCase();
+
+        if (k.includes("status")) status = row[key];
+        if (k.includes("vendor")) vendor = row[key];
+        if (k.includes("defect")) defects = parseInt(row[key]) || 0;
+        if (k.includes("inspection")) inspectionType = row[key];
+        if (k.includes("qr") || k.includes("order")) orderID = row[key];
       }
-    }
 
-    statusValue = (statusValue || "").toLowerCase();
+      status = (status || "").toLowerCase();
 
-    if (statusValue.includes("pending")) {
-      pending++;
-    } else {
-      completed++;
-    }
+      if (status.includes("pass")) pass++;
+      else if (status.includes("fail")) fail++;
 
-  });
+      totalDefects += defects;
 
-  document.getElementById("total").innerText = total;
-  document.getElementById("pending").innerText = pending;
-  document.getElementById("completed").innerText = completed;
-
-  const ctx = document.getElementById('chart');
-
-  new Chart(ctx, {
-    type: 'doughnut',
-    data: {
-      labels: ['Pending','Completed'],
-      datasets: [{
-        data: [pending, completed],
-        backgroundColor: ['#800000','#333333'],
-        borderWidth: 0
-      }]
-    },
-    options: {
-      plugins: {
-        legend: {
-          labels: {
-            color: "#333"
-          }
-        }
+      // Vendor count
+      if (vendor) {
+        vendorMap[vendor] = (vendorMap[vendor] || 0) + 1;
       }
-    }
-  });
 
-}
+      // Inspection type count
+      if (inspectionType) {
+        inspectionMap[inspectionType] = (inspectionMap[inspectionType] || 0) + 1;
+      }
 
-loadData();
+      // Unique orders
+      if (orderID) {
+        orders.add(orderID);
+      }
+
+    });
+
+    // Metrics
+    const passRate = ((pass / total) * 100).toFixed(1);
+    const failRate = ((fail / total) * 100).toFixed(1);
+    const defectRate = (totalDefects / total).toFixed(2);
+    const orderCoverage = ((orders.size / total) * 100).toFixed(1);
+
+    // Update UI (you can add cards later)
+    document.getElementById("total").innerText = total;
+    document.getElementById("pending").innerText = fail; // optional reuse
+    document.getElementById("completed").innerText = pass;
+
+    // PASS/FAIL CHART
+    new Chart(document.getElementById("chart"), {
+      type: 'doughnut',
+      data: {
+        labels: ['Pass','Fail'],
+        datasets: [{
+          data: [pass, fail],
+          backgroundColor: ['#800000','#333']
+        }]
+      }
+    });
+
+    // VENDOR CHART
+    new Chart(document.getElementById("vendorChart"), {
+      type: 'bar',
+      data: {
+        labels: Object.keys(vendorMap),
+        datasets: [{
+          label: 'Inspections',
+          data: Object.values(vendorMap),
+          backgroundColor: '#800000'
+        }]
+      }
+    });
+
+    // INSPECTION TYPE CHART
+    new Chart(document.getElementById("typeChart"), {
+      type: 'pie',
+      data: {
+        labels: Object.keys(inspectionMap),
+        datasets: [{
+          data: Object.values(inspectionMap),
+          backgroundColor: ['#800000','#333','#999']
+        }]
+      }
+    });
+
+    console.log({
+      passRate,
+      failRate,
+      defectRate,
+      orderCoverage
+    });
+
+  }
+});
 
 </script>
-
-</body>
-</html>
